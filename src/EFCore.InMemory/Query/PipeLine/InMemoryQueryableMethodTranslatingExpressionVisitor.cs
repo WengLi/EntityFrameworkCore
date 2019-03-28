@@ -247,12 +247,8 @@ namespace Microsoft.EntityFrameworkCore.InMemory.Query.Pipeline
                 return source;
             }
 
-            var parameterBindings = new Dictionary<Expression, Expression>
-            {
-                { selector.Parameters.Single(), source.ShaperExpression.Body }
-            };
-
-            var newSelectorBody = new ReplacingExpressionVisitor(parameterBindings).Visit(selector.Body);
+            var newSelectorBody = ReplacingExpressionVisitor.Replace(
+                selector.Parameters.Single(), source.ShaperExpression.Body, selector.Body);
 
             newSelectorBody = _projectionBindingExpressionVisitor
                     .Translate((InMemoryQueryExpression)source.QueryExpression, newSelectorBody);
@@ -351,12 +347,8 @@ namespace Microsoft.EntityFrameworkCore.InMemory.Query.Pipeline
         private LambdaExpression TranslateLambdaExpression(
             ShapedQueryExpression shapedQueryExpression, LambdaExpression lambdaExpression)
         {
-            var parameterBindings = new Dictionary<Expression, Expression>
-            {
-                { lambdaExpression.Parameters.Single(), shapedQueryExpression.ShaperExpression.Body }
-            };
-
-            var lambdaBody = new ReplacingExpressionVisitor(parameterBindings).Visit(lambdaExpression.Body);
+            var lambdaBody = ReplacingExpressionVisitor.Replace(
+                lambdaExpression.Parameters.Single(), shapedQueryExpression.ShaperExpression.Body, lambdaExpression.Body);
 
             return Expression.Lambda(
                 TranslateExpression((InMemoryQueryExpression)shapedQueryExpression.QueryExpression, lambdaBody),

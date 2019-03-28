@@ -478,12 +478,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 return source;
             }
 
-            var parameterBindings = new Dictionary<Expression, Expression>
-            {
-                { selector.Parameters.Single(), source.ShaperExpression.Body }
-            };
-
-            var newSelectorBody = new ReplacingExpressionVisitor(parameterBindings).Visit(selector.Body);
+            var newSelectorBody = ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression.Body, selector.Body);
 
             newSelectorBody = _projectionBindingExpressionVisitor
                 .Translate((SelectExpression)source.QueryExpression, newSelectorBody);
@@ -628,12 +623,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
         private Expression RemapLambdaBody(Expression shaperBody, LambdaExpression lambdaExpression)
         {
-            var parameterBindings = new Dictionary<Expression, Expression>
-            {
-                { lambdaExpression.Parameters.Single(), shaperBody }
-            };
-
-            return new ReplacingExpressionVisitor(parameterBindings).Visit(lambdaExpression.Body);
+            return ReplacingExpressionVisitor.Replace(lambdaExpression.Parameters.Single(), shaperBody, lambdaExpression.Body);
         }
 
         private ShapedQueryExpression AggregateResultShaper(

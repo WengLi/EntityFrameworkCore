@@ -282,12 +282,10 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                         valueExpression = Expression.Convert(valueExpression, converter.ProviderClrType);
                     }
 
-                    valueExpression = new ReplacingExpressionVisitor(
-                        new Dictionary<Expression, Expression>
-                            {
-                                { converter.ConvertFromProviderExpression.Parameters.Single(), valueExpression }
-                            }
-                        ).Visit(converter.ConvertFromProviderExpression.Body);
+                    valueExpression = ReplacingExpressionVisitor.Replace(
+                        converter.ConvertFromProviderExpression.Parameters.Single(),
+                        valueExpression,
+                        converter.ConvertFromProviderExpression.Body);
                 }
 
                 if (valueExpression.Type != clrType)
