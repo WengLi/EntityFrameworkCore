@@ -57,7 +57,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Internal
         {
             if (queryStateManager)
             {
-                var entry = _dependencies.StateManager.TryGetEntry(key, entityLoadInfo.ValueBuffer, throwOnNullKey);
+                var entry = _dependencies.StateManager.TryGetEntry(key, new object[] { }, throwOnNullKey, out var _);
 
                 if (entry != null)
                 {

@@ -226,9 +226,12 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
                     var property = (IProperty)((ConstantExpression)methodCallExpression.Arguments[2]).Value;
 
+                    var projectionIndex = originalIndex + indexOffset;
+                    var projection = _selectExpression.Projection[projectionIndex];
+
                     return CreateGetValueExpression(
-                        originalIndex + indexOffset,
-                        property,
+                        projectionIndex,
+                        IsNullableProjection(projection),
                         property.FindRelationalMapping(),
                         methodCallExpression.Type);
                 }
@@ -245,7 +248,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
                     return CreateGetValueExpression(
                         projectionIndex,
-                        null,
+                        IsNullableProjection(projection),
                         projection.Expression.TypeMapping,
                         projectionBindingExpression.Type);
                 }
@@ -253,9 +256,14 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 return base.VisitExtension(extensionExpression);
             }
 
+            private static bool IsNullableProjection(ProjectionExpression projection)
+            {
+                return projection.Expression is ColumnExpression column ? column.Nullable : true;
+            }
+
             private static Expression CreateGetValueExpression(
                 int index,
-                IProperty property,
+                bool nullable,
                 RelationalTypeMapping typeMapping,
                 Type clrType)
             {
@@ -322,8 +330,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 //    valueExpression = Expression.Convert(valueExpression, typeof(object));
                 //}
 
-                if (property?.IsNullable != false
-                    || property.DeclaringEntityType.BaseType != null)
+                if (nullable)
                 {
                     valueExpression
                         = Expression.Condition(

@@ -13,21 +13,23 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
     {
         #region Fields & Constructors
 
-        internal ColumnExpression(IProperty property, TableExpressionBase table)
-            : this(property.Relational().ColumnName, table, property.ClrType, property.FindRelationalMapping())
+        internal ColumnExpression(IProperty property, TableExpressionBase table, bool nullable)
+            : this(property.Relational().ColumnName, table, property.ClrType, property.FindRelationalMapping(),
+                  nullable || property.IsNullable || property.DeclaringEntityType.BaseType != null)
         {
         }
 
-        internal ColumnExpression(ProjectionExpression subqueryProjection, TableExpressionBase table)
-            : this(subqueryProjection.Alias, table, subqueryProjection.Type, subqueryProjection.Expression.TypeMapping)
+        internal ColumnExpression(ProjectionExpression subqueryProjection, TableExpressionBase table, bool nullable)
+            : this(subqueryProjection.Alias, table, subqueryProjection.Type, subqueryProjection.Expression.TypeMapping, nullable)
         {
         }
 
-        private ColumnExpression(string name, TableExpressionBase table, Type type, RelationalTypeMapping typeMapping)
+        private ColumnExpression(string name, TableExpressionBase table, Type type, RelationalTypeMapping typeMapping, bool nullable)
             : base(type, typeMapping)
         {
             Name = name;
             Table = table;
+            Nullable = nullable;
         }
 
         #endregion
@@ -36,6 +38,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
 
         public string Name { get; }
         public TableExpressionBase Table { get; }
+        public bool Nullable { get; }
 
         #endregion
 
@@ -46,8 +49,13 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             var newTable = (TableExpressionBase)visitor.Visit(Table);
 
             return newTable != Table
-                ? new ColumnExpression(Name, newTable, Type, TypeMapping)
+                ? new ColumnExpression(Name, newTable, Type, TypeMapping, Nullable)
                 : this;
+        }
+
+        public ColumnExpression MakeNullable()
+        {
+            return new ColumnExpression(Name, Table, Type.MakeNullable(), TypeMapping, true);
         }
 
         #endregion

@@ -94,7 +94,8 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                 = typeof(InternalEntityEntry).GetProperty(nameof(InternalEntityEntry.Entity));
 
             private static readonly MethodInfo _tryGetEntryMethodInfo
-                = typeof(IStateManager).GetMethod(nameof(IStateManager.TryGetEntry), new[] { typeof(IKey), typeof(object[]) });
+                = typeof(IStateManager).GetTypeInfo().GetDeclaredMethods(nameof(IStateManager.TryGetEntry))
+                    .Single(mi => mi.GetParameters().Length == 4);
             private static readonly MethodInfo _startTrackingMethodInfo
                 = typeof(QueryContext).GetMethod(nameof(QueryContext.StartTracking), new[] { typeof(IEntityType), typeof(object) });
 
@@ -143,11 +144,14 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
                     if (_trackQueryResults)
                     {
-                        var entryVarible = Expression.Variable(typeof(InternalEntityEntry), "entry" + _currentEntityIndex);
-                        _variables.Add(entryVarible);
+                        var entry = Expression.Variable(typeof(InternalEntityEntry), "entry" + _currentEntityIndex);
+                        var hasNullKey = Expression.Variable(typeof(bool), "hasNullKey" + _currentEntityIndex);
+                        _variables.Add(entry);
+                        _variables.Add(hasNullKey);
+
                         _expressions.Add(
                             Expression.Assign(
-                                entryVarible,
+                                entry,
                                 Expression.Call(
                                     Expression.MakeMemberAccess(
                                         QueryCompilationContext2.QueryContextParameter,
@@ -156,31 +160,48 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                                     Expression.Constant(primaryKey),
                                     Expression.NewArrayInit(
                                     typeof(object),
-                                    entityShaperExpression.EntityType.FindPrimaryKey().Properties
+                                    primaryKey.Properties
                                         .Select(p => _entityMaterializerSource.CreateReadValueExpression(
                                             entityShaperExpression.ValueBufferExpression,
                                             typeof(object),
                                             p.GetIndex(),
-                                            p))))));
+                                            p))),
+                                    Expression.Constant(!entityShaperExpression.Nullable),
+                                    hasNullKey)));
 
                         _expressions.Add(
                             Expression.Assign(
                                 result,
                                 Expression.Condition(
-                                    Expression.NotEqual(
-                                        entryVarible,
-                                        Expression.Constant(default(InternalEntityEntry), typeof(InternalEntityEntry))),
-                                    Expression.Convert(
-                                        Expression.MakeMemberAccess(entryVarible, _entityMemberInfo),
-                                        entityType.ClrType),
-                                    MaterializeEntity(entityType, valueBuffer))));
+                                    hasNullKey,
+                                    Expression.Constant(null, entityType.ClrType),
+                                    Expression.Condition(
+                                        Expression.NotEqual(
+                                            entry,
+                                            Expression.Constant(default(InternalEntityEntry), typeof(InternalEntityEntry))),
+                                        Expression.Convert(
+                                            Expression.MakeMemberAccess(entry, _entityMemberInfo),
+                                            entityType.ClrType),
+                                        MaterializeEntity(entityType, valueBuffer)))));
                     }
                     else
                     {
                         _expressions.Add(
                             Expression.Assign(
                                 result,
-                                MaterializeEntity(entityType, valueBuffer)));
+                                Expression.Condition(
+                                    primaryKey.Properties
+                                            .Select(p =>
+                                                Expression.Equal(
+                                                    _entityMaterializerSource.CreateReadValueExpression(
+                                                        entityShaperExpression.ValueBufferExpression,
+                                                        typeof(object),
+                                                        p.GetIndex(),
+                                                        p),
+                                                    Expression.Constant(null)))
+                                                .Aggregate((a,b) => Expression.OrElse(a, b)),
+                                    Expression.Constant(null, entityType.ClrType),
+                                    MaterializeEntity(entityType, valueBuffer))));
                     }
 
                     return result;

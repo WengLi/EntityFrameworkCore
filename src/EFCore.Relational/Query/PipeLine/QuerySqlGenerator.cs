@@ -617,5 +617,15 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
             return innerJoinExpression;
         }
+
+        protected override Expression VisitLeftJoin(LeftJoinExpression leftJoinExpression)
+        {
+            _relationalCommandBuilder.Append("LEFT JOIN ");
+            Visit(leftJoinExpression.Table);
+            _relationalCommandBuilder.Append(" ON ");
+            Visit(leftJoinExpression.JoinPredicate);
+
+            return leftJoinExpression;
+        }
     }
 }

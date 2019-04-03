@@ -19,7 +19,8 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 new ProjectionBindingExpression(
                     QueryExpression,
                     new ProjectionMember(),
-                    typeof(ValueBuffer))),
+                    typeof(ValueBuffer)),
+                false),
                 resultParameter);
         }
     }

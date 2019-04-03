@@ -9,14 +9,16 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 {
     public class EntityShaperExpression : Expression
     {
-        public EntityShaperExpression(IEntityType entityType, ProjectionBindingExpression valueBufferExpression)
+        public EntityShaperExpression(IEntityType entityType, ProjectionBindingExpression valueBufferExpression, bool nullable)
         {
             EntityType = entityType;
             ValueBufferExpression = valueBufferExpression;
+            Nullable = nullable;
         }
 
         public IEntityType EntityType { get; }
         public ProjectionBindingExpression ValueBufferExpression { get; }
+        public bool Nullable { get; }
 
         protected override Expression VisitChildren(ExpressionVisitor visitor)
         {
@@ -28,7 +30,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
         public EntityShaperExpression Update(ProjectionBindingExpression valueBufferExpression)
         {
             return valueBufferExpression != ValueBufferExpression
-                ? new EntityShaperExpression(EntityType, valueBufferExpression)
+                ? new EntityShaperExpression(EntityType, valueBufferExpression, Nullable)
                 : this;
         }
 

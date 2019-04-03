@@ -49,7 +49,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
 
             _tables.Add(tableExpression);
 
-            _projectionMapping[new ProjectionMember()] = new EntityProjectionExpression(entityType, tableExpression);
+            _projectionMapping[new ProjectionMember()] = new EntityProjectionExpression(entityType, tableExpression, false);
         }
         public SqlExpression BindProperty(Expression projectionExpression, IProperty property)
         {
@@ -232,7 +232,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                         var innerColumn = entityProjection.GetProperty(property);
                         var projectionExpression = new ProjectionExpression(innerColumn, innerColumn.Name);
                         subquery._projection.Add(projectionExpression);
-                        propertyExpressions[property] = new ColumnExpression(projectionExpression, subquery);
+                        propertyExpressions[property] = new ColumnExpression(projectionExpression, subquery, entityProjection.Nullable);
                         index++;
                     }
 
@@ -245,7 +245,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                         (SqlExpression)projection.Value, "c" + columnNameCounter++);
                     subquery._projection.Add(projectionExpression);
                     _projectionMapping[projection.Key] = new ColumnExpression(
-                        projectionExpression, subquery);
+                        projectionExpression, subquery, IsNullableProjection(projectionExpression));
                     index++;
                 }
             }
@@ -261,14 +261,14 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                     pe => pe.Expression.Equals(orderingExpression));
                 if (innerProjection != null)
                 {
-                    _orderings.Add(new OrderingExpression(new ColumnExpression(innerProjection, subquery), ordering.Ascending));
+                    _orderings.Add(new OrderingExpression(new ColumnExpression(innerProjection, subquery, IsNullableProjection(innerProjection)), ordering.Ascending));
                 }
                 else
                 {
                     var projectionExpression = new ProjectionExpression(ordering.Expression, "c" + columnNameCounter++);
                     subquery._projection.Add(projectionExpression);
                     _orderings.Add(new OrderingExpression(
-                        new ColumnExpression(projectionExpression, subquery), ordering.Ascending));
+                        new ColumnExpression(projectionExpression, subquery, IsNullableProjection(projectionExpression)), ordering.Ascending));
 
                 }
             }
@@ -279,6 +279,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             Predicate = null;
             _tables.Clear();
             _tables.Add(subquery);
+        }
+
+        private static bool IsNullableProjection(ProjectionExpression projection)
+        {
+            return projection.Expression is ColumnExpression column ? column.Nullable : true;
         }
 
         public void AddInnerJoin(SelectExpression innerSelectExpression, SqlExpression joinPredicate, Type transparentIdentifierType)
@@ -297,6 +302,37 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             foreach (var projection in innerSelectExpression._projectionMapping)
             {
                 projectionMapping[projection.Key.ShiftMember(innerMemberInfo)] = projection.Value;
+            }
+
+            _projectionMapping = projectionMapping;
+        }
+
+        public void AddLeftJoin(SelectExpression innerSelectExpression, SqlExpression joinPredicate, Type transparentIdentifierType)
+        {
+            var joinTable = new LeftJoinExpression(innerSelectExpression.Tables.Single(), joinPredicate);
+            _tables.Add(joinTable);
+
+            var outerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Outer");
+            var projectionMapping = new Dictionary<ProjectionMember, Expression>();
+            foreach (var projection in _projectionMapping)
+            {
+                projectionMapping[projection.Key.ShiftMember(outerMemberInfo)] = projection.Value;
+            }
+
+            var innerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Inner");
+            foreach (var projection in innerSelectExpression._projectionMapping)
+            {
+                var projectionToAdd = projection.Value;
+                if (projectionToAdd is EntityProjectionExpression entityProjection)
+                {
+                    projectionToAdd = entityProjection.MakeNullable();
+                }
+                else if (projectionToAdd is ColumnExpression column)
+                {
+                    projectionToAdd = column.MakeNullable();
+                }
+
+                projectionMapping[projection.Key.ShiftMember(innerMemberInfo)] = projectionToAdd;
             }
 
             _projectionMapping = projectionMapping;

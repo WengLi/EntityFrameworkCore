@@ -348,5 +348,17 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.Pipeline
 
             return innerJoinExpression.Update(table, joinPredicate);
         }
+
+        protected override Expression VisitLeftJoin(LeftJoinExpression leftJoinExpression)
+        {
+            var parentSearchCondition = _isSearchCondition;
+            _isSearchCondition = false;
+            var table = (TableExpressionBase)Visit(leftJoinExpression.Table);
+            _isSearchCondition = true;
+            var joinPredicate = (SqlExpression)Visit(leftJoinExpression.JoinPredicate);
+            _isSearchCondition = parentSearchCondition;
+
+            return leftJoinExpression.Update(table, joinPredicate);
+        }
     }
 }

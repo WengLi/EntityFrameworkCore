@@ -14,10 +14,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             = new Dictionary<IProperty, ColumnExpression>();
         private readonly TableExpressionBase _innerTable;
 
-        public EntityProjectionExpression(IEntityType entityType, TableExpressionBase innerTable)
+        public EntityProjectionExpression(IEntityType entityType, TableExpressionBase innerTable, bool nullable)
         {
             EntityType = entityType;
             _innerTable = innerTable;
+            Nullable = nullable;
         }
 
         public EntityProjectionExpression(IEntityType entityType, IDictionary<IProperty, ColumnExpression> propertyExpressions)
@@ -33,7 +34,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 var table = (TableExpressionBase)visitor.Visit(_innerTable);
 
                 return table != _innerTable
-                    ? new EntityProjectionExpression(EntityType, table)
+                    ? new EntityProjectionExpression(EntityType, table, Nullable)
                     : this;
             }
             else
@@ -54,13 +55,32 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             }
         }
 
+        public EntityProjectionExpression MakeNullable()
+        {
+            if (_innerTable != null)
+            {
+                return new EntityProjectionExpression(EntityType, _innerTable, true);
+            }
+            else
+            {
+                var newCache = new Dictionary<IProperty, ColumnExpression>();
+                foreach (var expression in _propertyExpressionsCache)
+                {
+                    newCache[expression.Key] = expression.Value.MakeNullable();
+                }
+
+                return new EntityProjectionExpression(EntityType, newCache);
+            }
+        }
+
         public IEntityType EntityType { get; }
+        public bool Nullable { get; }
 
         public ColumnExpression GetProperty(IProperty property)
         {
             if (!_propertyExpressionsCache.TryGetValue(property, out var expression))
             {
-                expression = new ColumnExpression(property, _innerTable);
+                expression = new ColumnExpression(property, _innerTable, Nullable);
                 _propertyExpressionsCache[property] = expression;
             }
 

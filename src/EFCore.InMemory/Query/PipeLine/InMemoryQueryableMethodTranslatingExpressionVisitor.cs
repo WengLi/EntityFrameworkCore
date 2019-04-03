@@ -173,7 +173,8 @@ namespace Microsoft.EntityFrameworkCore.InMemory.Query.Pipeline
                 outer,
                 resultSelector,
                 inner.ShaperExpression,
-                transparentIdentifierType);
+                transparentIdentifierType,
+                false);
         }
 
         protected override ShapedQueryExpression TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression predicate, bool returnDefault)
@@ -184,6 +185,11 @@ namespace Microsoft.EntityFrameworkCore.InMemory.Query.Pipeline
                 returnDefault
                     ? InMemoryLinqOperatorProvider.LastOrDefaultPredicate
                     : InMemoryLinqOperatorProvider.LastPredicate);
+        }
+
+        protected override ShapedQueryExpression TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        {
+            throw new NotImplementedException();
         }
 
         protected override ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression predicate)

@@ -260,7 +260,10 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
         protected override ShapedQueryExpression TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector, LambdaExpression elementSelector, LambdaExpression resultSelector) => throw new NotImplementedException();
 
-        protected override ShapedQueryExpression TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) => throw new NotImplementedException();
+        protected override ShapedQueryExpression TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        {
+            throw new NotImplementedException();
+        }
 
         protected override ShapedQueryExpression TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2) => throw new NotImplementedException();
 
@@ -296,7 +299,49 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                     outer,
                     resultSelector,
                     inner.ShaperExpression,
-                    transparentIdentifierType);
+                    transparentIdentifierType,
+                    false);
+            }
+
+            throw new NotImplementedException();
+        }
+
+        protected override ShapedQueryExpression TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
+        {
+            var outerSelectExpression = (SelectExpression)outer.QueryExpression;
+            if (outerSelectExpression.Limit != null
+                || outerSelectExpression.Offset != null
+                || outerSelectExpression.IsDistinct)
+            {
+                outerSelectExpression.PushdownIntoSubQuery();
+            }
+
+            var innerSelectExpression = (SelectExpression)inner.QueryExpression;
+            if (innerSelectExpression.Orderings.Any()
+                || innerSelectExpression.Limit != null
+                || innerSelectExpression.Offset != null
+                || innerSelectExpression.IsDistinct
+                || innerSelectExpression.Predicate != null)
+            {
+                innerSelectExpression.PushdownIntoSubQuery();
+            }
+
+            var joinPredicate = CreateJoinPredicate(outer, outerKeySelector, inner, innerKeySelector);
+            if (joinPredicate != null)
+            {
+                var transparentIdentifierType = CreateTransparentIdentifierType(
+                    resultSelector.Parameters[0].Type,
+                    resultSelector.Parameters[1].Type);
+
+                outerSelectExpression.AddLeftJoin(
+                    innerSelectExpression, joinPredicate, transparentIdentifierType);
+
+                return TranslateResultSelectorForJoin(
+                    outer,
+                    resultSelector,
+                    inner.ShaperExpression,
+                    transparentIdentifierType,
+                    true);
             }
 
             throw new NotImplementedException();

@@ -91,44 +91,53 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking.Internal
         ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
         ///     directly from your code. This API may change or be removed in future releases.
         /// </summary>
-        public virtual InternalEntityEntry TryGetEntry(in ValueBuffer valueBuffer, bool throwOnNullKey)
+        public virtual InternalEntityEntry TryGetEntry(object[] keyValues, bool throwOnNullKey, out bool hasNullKey)
         {
-            var key = PrincipalKeyValueFactory.CreateFromBuffer(valueBuffer);
+            var key = PrincipalKeyValueFactory.CreateFromKeyValues(keyValues);
 
-            if (key == null
-                && throwOnNullKey)
+            if (key == null)
             {
-                if (Key.IsPrimaryKey())
+                if (throwOnNullKey)
                 {
+                    if (Key.IsPrimaryKey())
+                    {
+                        throw new InvalidOperationException(
+                            CoreStrings.InvalidKeyValue(
+                                Key.DeclaringEntityType.DisplayName(),
+                                PrincipalKeyValueFactory.FindNullPropertyInKeyValues(keyValues).Name));
+                    }
+
                     throw new InvalidOperationException(
-                        CoreStrings.InvalidKeyValue(
+                        CoreStrings.InvalidAlternateKeyValue(
                             Key.DeclaringEntityType.DisplayName(),
-                            PrincipalKeyValueFactory.FindNullPropertyInValueBuffer(valueBuffer).Name));
+                            PrincipalKeyValueFactory.FindNullPropertyInKeyValues(keyValues).Name));
                 }
 
-                throw new InvalidOperationException(
-                    CoreStrings.InvalidAlternateKeyValue(
-                        Key.DeclaringEntityType.DisplayName(),
-                        PrincipalKeyValueFactory.FindNullPropertyInValueBuffer(valueBuffer).Name));
-            }
+                hasNullKey = true;
 
-            try
-            {
-                return key != null
-                       && _identityMap.TryGetValue((TKey)key, out var entry)
-                    ? entry
-                    : null;
+                return null;
             }
-            catch (InvalidCastException e)
+            else
             {
-                throw new InvalidOperationException(
-                    // ReSharper disable once PossibleNullReferenceException
-                    CoreStrings.ErrorMaterializingPropertyInvalidCast(
-                        Key.DeclaringEntityType.DisplayName(),
-                        Key.Properties.First().Name,
-                        typeof(TKey),
-                        key.GetType()),
-                    e);
+                hasNullKey = false;
+
+                try
+                {
+                    return _identityMap.TryGetValue((TKey)key, out var entry)
+                        ? entry
+                        : null;
+                }
+                catch (InvalidCastException e)
+                {
+                    throw new InvalidOperationException(
+                        // ReSharper disable once PossibleNullReferenceException
+                        CoreStrings.ErrorMaterializingPropertyInvalidCast(
+                            Key.DeclaringEntityType.DisplayName(),
+                            Key.Properties.First().Name,
+                            typeof(TKey),
+                            key.GetType()),
+                        e);
+                }
             }
         }
 

@@ -45,6 +45,25 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking.Internal
         ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
         ///     directly from your code. This API may change or be removed in future releases.
         /// </summary>
+        public virtual IProperty FindNullPropertyInKeyValues(object[] keyValues)
+        {
+            var index = -1;
+            for (var i = 0; i < keyValues.Length; i++)
+            {
+                if (keyValues[i] == null)
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            return Properties[index];
+        }
+
+        /// <summary>
+        ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
+        ///     directly from your code. This API may change or be removed in future releases.
+        /// </summary>
         public virtual IProperty FindNullPropertyInValueBuffer(ValueBuffer valueBuffer)
             => Properties.FirstOrDefault(p => valueBuffer[p.GetIndex()] == null);
 

@@ -357,8 +357,8 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking.Internal
         ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
         ///     directly from your code. This API may change or be removed in future releases.
         /// </summary>
-        public virtual InternalEntityEntry TryGetEntry(IKey key, in ValueBuffer valueBuffer, bool throwOnNullKey)
-            => GetOrCreateIdentityMap(key).TryGetEntry(valueBuffer, throwOnNullKey);
+        public virtual InternalEntityEntry TryGetEntry(IKey key, object[] keyValues, bool throwOnNullKey, out bool hasNullKey)
+            => GetOrCreateIdentityMap(key).TryGetEntry(keyValues, throwOnNullKey, out hasNullKey);
 
         /// <summary>
         ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
@@ -692,7 +692,7 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking.Internal
                 foreignKey,
                 FindIdentityMap(foreignKey.PrincipalKey)
                     ?.TryGetEntryUsingRelationshipSnapshot(foreignKey, dependentEntry));
-        
+
         private static InternalEntityEntry FilterIncompatiblePrincipal(IForeignKey foreignKey,
             InternalEntityEntry principalEntry)
             => principalEntry != null

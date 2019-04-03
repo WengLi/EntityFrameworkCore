@@ -24,7 +24,8 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
         protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
         {
-            if (methodCallExpression.Method.DeclaringType == typeof(Queryable))
+            if (methodCallExpression.Method.DeclaringType == typeof(Queryable)
+                || methodCallExpression.Method.DeclaringType == typeof(EntityQueryableExtensions))
             {
                 var source = Visit(methodCallExpression.Arguments[0]);
                 if (source is ShapedQueryExpression shapedQueryExpression)
@@ -240,6 +241,23 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
                             break;
 
+                        case nameof(EntityQueryableExtensions.LeftJoin)
+                        when argumentCount == 5:
+                            {
+                                var innerSource = Visit(methodCallExpression.Arguments[1]);
+                                if (innerSource is ShapedQueryExpression innerShapedQueryExpression)
+                                {
+                                    return TranslateLeftJoin(
+                                        shapedQueryExpression,
+                                        innerShapedQueryExpression,
+                                        UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[2]),
+                                        UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[3]),
+                                        UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[4]));
+                                }
+                            }
+
+                            break;
+
                         case nameof(Queryable.Last):
                             shapedQueryExpression.ResultType = ResultType.Single;
                             return TranslateLastOrDefault(
@@ -412,37 +430,42 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
         }
 
         private LambdaExpression UnwrapLambdaFromQuoteExpression(Expression expression)
-            => (LambdaExpression)((UnaryExpression)expression).Operand;
-
-        private readonly struct TransparentIdentifier<TOuter, TInner>
-        {
-            [UsedImplicitly]
-#pragma warning disable IDE0051 // Remove unused private members
-            private TransparentIdentifier(TOuter outer, TInner inner)
-#pragma warning restore IDE0051 // Remove unused private members
-            {
-                Outer = outer;
-                Inner = inner;
-            }
-
-            [UsedImplicitly]
-            public readonly TOuter Outer;
-
-            [UsedImplicitly]
-            public readonly TInner Inner;
-        }
+            => (LambdaExpression)(expression is UnaryExpression unary
+            ? unary.Operand
+            : expression);
 
         protected Type CreateTransparentIdentifierType(Type outerType, Type innerType)
         {
             return typeof(TransparentIdentifier<,>).MakeGenericType(outerType, innerType);
         }
 
+        private class EntityShaperNullableMarkingExpressionVisitor : ExpressionVisitor
+        {
+            protected override Expression VisitExtension(Expression extensionExpression)
+            {
+                if (extensionExpression is EntityShaperExpression entityShaper)
+                {
+                    return new EntityShaperExpression(entityShaper.EntityType, entityShaper.ValueBufferExpression, true);
+                }
+
+                return base.VisitExtension(extensionExpression);
+            }
+        }
+
         protected ShapedQueryExpression TranslateResultSelectorForJoin(
             ShapedQueryExpression outer,
             LambdaExpression resultSelector,
             LambdaExpression innerShaper,
-            Type transparentIdentifierType)
+            Type transparentIdentifierType,
+            bool innerNullable)
         {
+            if (innerNullable)
+            {
+                innerShaper = Expression.Lambda(
+                    new EntityShaperNullableMarkingExpressionVisitor().Visit(innerShaper.Body),
+                    innerShaper.Parameters);
+            }
+
             outer.ShaperExpression = CombineShapers(
                 outer.QueryExpression,
                 outer.ShaperExpression,
@@ -541,6 +564,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
         protected abstract ShapedQueryExpression TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector);
         protected abstract ShapedQueryExpression TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2);
         protected abstract ShapedQueryExpression TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector);
+        protected abstract ShapedQueryExpression TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector);
         protected abstract ShapedQueryExpression TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression predicate, bool returnDefault);
         protected abstract ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression predicate);
         protected abstract ShapedQueryExpression TranslateMax(ShapedQueryExpression source, LambdaExpression selector, Type resultType);
@@ -560,7 +584,24 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
         protected abstract ShapedQueryExpression TranslateThenBy(ShapedQueryExpression source, LambdaExpression keySelector, bool ascending);
         protected abstract ShapedQueryExpression TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2);
         protected abstract ShapedQueryExpression TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate);
+    }
 
+    public readonly struct TransparentIdentifier<TOuter, TInner>
+    {
+        [UsedImplicitly]
+#pragma warning disable IDE0051 // Remove unused private members
+        private TransparentIdentifier(TOuter outer, TInner inner)
+#pragma warning restore IDE0051 // Remove unused private members
+        {
+            Outer = outer;
+            Inner = inner;
+        }
+
+        [UsedImplicitly]
+        public readonly TOuter Outer;
+
+        [UsedImplicitly]
+        public readonly TInner Inner;
     }
 
 }
