@@ -232,7 +232,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                         var innerColumn = entityProjection.GetProperty(property);
                         var projectionExpression = new ProjectionExpression(innerColumn, innerColumn.Name);
                         subquery._projection.Add(projectionExpression);
-                        propertyExpressions[property] = new ColumnExpression(projectionExpression, subquery, entityProjection.Nullable);
+                        propertyExpressions[property] = new ColumnExpression(projectionExpression, subquery, innerColumn.Nullable);
                         index++;
                     }
 
@@ -333,6 +333,27 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                 }
 
                 projectionMapping[projection.Key.ShiftMember(innerMemberInfo)] = projectionToAdd;
+            }
+
+            _projectionMapping = projectionMapping;
+        }
+
+        public void AddCrossJoin(SelectExpression innerSelectExpression, Type transparentIdentifierType)
+        {
+            var joinTable = new CrossJoinExpression(innerSelectExpression.Tables.Single());
+            _tables.Add(joinTable);
+
+            var outerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Outer");
+            var projectionMapping = new Dictionary<ProjectionMember, Expression>();
+            foreach (var projection in _projectionMapping)
+            {
+                projectionMapping[projection.Key.ShiftMember(outerMemberInfo)] = projection.Value;
+            }
+
+            var innerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Inner");
+            foreach (var projection in innerSelectExpression._projectionMapping)
+            {
+                projectionMapping[projection.Key.ShiftMember(innerMemberInfo)] = projection.Value;
             }
 
             _projectionMapping = projectionMapping;

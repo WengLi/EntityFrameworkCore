@@ -337,6 +337,16 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.Pipeline
             return orderingExpression.Update(expression);
         }
 
+        protected override Expression VisitCrossJoin(CrossJoinExpression crossJoinExpression)
+        {
+            var parentSearchCondition = _isSearchCondition;
+            _isSearchCondition = false;
+            var table = (TableExpressionBase)Visit(crossJoinExpression.Table);
+            _isSearchCondition = parentSearchCondition;
+
+            return crossJoinExpression.Update(table);
+        }
+
         protected override Expression VisitInnerJoin(InnerJoinExpression innerJoinExpression)
         {
             var parentSearchCondition = _isSearchCondition;

@@ -533,9 +533,99 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             return source;
         }
 
-        protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector, LambdaExpression resultSelector) => throw new NotImplementedException();
+        private static MethodInfo _defaultIfEmptyWithoutArgMethodInfo = typeof(Enumerable).GetTypeInfo()
+            .GetDeclaredMethods(nameof(Enumerable.DefaultIfEmpty)).Single(mi => mi.GetParameters().Length == 1);
 
-        protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector) => throw new NotImplementedException();
+        protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector, LambdaExpression resultSelector)
+        {
+            var collectionSelectorBody = collectionSelector.Body;
+            //var defaultIfEmpty = false;
+
+            if (collectionSelectorBody is MethodCallExpression collectionEndingMethod
+                && collectionEndingMethod.Method.IsGenericMethod
+                && collectionEndingMethod.Method.GetGenericMethodDefinition() == _defaultIfEmptyWithoutArgMethodInfo)
+            {
+                //defaultIfEmpty = true;
+                collectionSelectorBody = collectionEndingMethod.Arguments[0];
+            }
+
+            var correlated = new CorrelationFindingExpressionVisitor().IsCorrelated(collectionSelectorBody, collectionSelector.Parameters[0]);
+            if (correlated)
+            {
+                // TODO visit inner with outer parameter;
+                throw new NotImplementedException();
+            }
+            else
+            {
+                if (Visit(collectionSelectorBody) is ShapedQueryExpression inner)
+                {
+                    var outerSelectExpression = (SelectExpression)source.QueryExpression;
+                    if (outerSelectExpression.Limit != null
+                        || outerSelectExpression.Offset != null
+                        || outerSelectExpression.IsDistinct
+                        || outerSelectExpression.Predicate != null)
+                    {
+                        outerSelectExpression.PushdownIntoSubQuery();
+                    }
+
+                    var innerSelectExpression = (SelectExpression)inner.QueryExpression;
+                    if (innerSelectExpression.Orderings.Any()
+                        || innerSelectExpression.Limit != null
+                        || innerSelectExpression.Offset != null
+                        || innerSelectExpression.IsDistinct
+                        || innerSelectExpression.Predicate != null)
+                    {
+                        innerSelectExpression.PushdownIntoSubQuery();
+                    }
+
+                    var transparentIdentifierType = CreateTransparentIdentifierType(
+                        resultSelector.Parameters[0].Type,
+                        resultSelector.Parameters[1].Type);
+
+                    outerSelectExpression.AddCrossJoin(
+                        innerSelectExpression, transparentIdentifierType);
+
+                    return TranslateResultSelectorForJoin(
+                        source,
+                        resultSelector,
+                        inner.ShaperExpression,
+                        transparentIdentifierType,
+                        false);
+                }
+            }
+
+            throw new NotImplementedException();
+        }
+
+        private class CorrelationFindingExpressionVisitor : ExpressionVisitor
+        {
+            private ParameterExpression _outerParameter;
+            private bool _isCorrelated;
+            public bool IsCorrelated(Expression tree, ParameterExpression outerParameter)
+            {
+                _isCorrelated = false;
+                _outerParameter = outerParameter;
+
+                Visit(tree);
+
+                return _isCorrelated;
+            }
+
+            protected override Expression VisitParameter(ParameterExpression parameterExpression)
+            {
+                if (parameterExpression == _outerParameter)
+                {
+                    _isCorrelated = true;
+                }
+
+                return base.VisitParameter(parameterExpression);
+            }
+        }
+
+        protected override ShapedQueryExpression TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector)
+        {
+            throw new NotImplementedException();
+        }
 
         protected override ShapedQueryExpression TranslateSingleOrDefault(ShapedQueryExpression source, LambdaExpression predicate, bool returnDefault)
         {

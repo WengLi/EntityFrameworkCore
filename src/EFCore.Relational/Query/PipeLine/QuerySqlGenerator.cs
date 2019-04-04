@@ -608,6 +608,14 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             }
         }
 
+        protected override Expression VisitCrossJoin(CrossJoinExpression crossJoinExpression)
+        {
+            _relationalCommandBuilder.Append("CROSS JOIN ");
+            Visit(crossJoinExpression.Table);
+
+            return crossJoinExpression;
+        }
+
         protected override Expression VisitInnerJoin(InnerJoinExpression innerJoinExpression)
         {
             _relationalCommandBuilder.Append("INNER JOIN ");

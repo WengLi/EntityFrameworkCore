@@ -54,6 +54,12 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                   || expression is MemberInitExpression
                   || expression is EntityShaperExpression))
             {
+                if (expression is ParameterExpression parameter
+                    && parameter.Type.IsGenericType
+                    && parameter.Type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return parameter;
+                }
 
                 var translation = _sqlTranslator.Translate(_selectExpression, expression);
 

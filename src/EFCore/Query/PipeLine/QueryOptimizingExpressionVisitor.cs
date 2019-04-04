@@ -53,10 +53,15 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
         private static MethodInfo _defaultIfEmptyWithoutArgMethodInfo = typeof(Enumerable).GetTypeInfo()
             .GetDeclaredMethods(nameof(Enumerable.DefaultIfEmpty)).Single(mi => mi.GetParameters().Length == 1);
 
-        private static MethodInfo _selectManyMethodInfo = typeof(Queryable).GetTypeInfo()
+        private static MethodInfo _selectManyWithCollectionSelectorMethodInfo = typeof(Queryable).GetTypeInfo()
             .GetDeclaredMethods(nameof(Queryable.SelectMany))
             .Single(mi => mi.GetParameters().Length == 3
                 && mi.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2);
+        private static MethodInfo _selectManyWithoutCollectionSelectorMethodInfo = typeof(Queryable).GetTypeInfo()
+            .GetDeclaredMethods(nameof(Queryable.SelectMany))
+            .Single(mi => mi.GetParameters().Length == 2
+                && mi.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2);
+
         private static MethodInfo _joinMethodInfo = typeof(Queryable).GetTypeInfo()
             .GetDeclaredMethods(nameof(Queryable.Join)).Single(mi => mi.GetParameters().Length == 5);
         private static MethodInfo _leftJoinMethodInfo = typeof(EntityQueryableExtensions).GetTypeInfo()
@@ -64,227 +69,92 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
         private static SelectManyVerifyingExpressionVisitor _selectManyVerifyingExpressionVisitor
             = new SelectManyVerifyingExpressionVisitor();
-        private static ResultSelectorVerifyingExpressionVisitor _resultSelectorVerifyingExpressionVisitor
-            = new ResultSelectorVerifyingExpressionVisitor();
         private static EnumerableToQueryableReMappingExpressionVisitor _enumerableToQueryableReMappingExpressionVisitor
             = new EnumerableToQueryableReMappingExpressionVisitor();
-
-        private class FlattenedGroupJoinExpression : Expression
-        {
-            private readonly Expression _resultSelectorBody;
-            private readonly ParameterExpression _groupParameter;
-            private readonly Dictionary<Expression, Expression> _replacements;
-            private readonly ParameterExpression _transparentIdentifierParameter;
-
-            public FlattenedGroupJoinExpression(
-                Expression source,
-                Expression resultSelectorBody,
-                ParameterExpression groupParameter,
-                Dictionary<Expression, Expression> replacements,
-                ParameterExpression transparentIdentifierParameter)
-            {
-                Source = source;
-                _resultSelectorBody = resultSelectorBody;
-                _groupParameter = groupParameter;
-                _replacements = replacements;
-                _transparentIdentifierParameter = transparentIdentifierParameter;
-            }
-
-            public LambdaExpression RemapLambda(LambdaExpression lambdaExpression)
-            {
-                var newBody = ReplacingExpressionVisitor.Replace(
-                    lambdaExpression.Parameters[0],
-                    _resultSelectorBody,
-                    lambdaExpression.Body);
-
-                var containsGroupParameter = _resultSelectorVerifyingExpressionVisitor.Verify(
-                    newBody, _groupParameter);
-
-                if (containsGroupParameter)
-                {
-                    throw new InvalidOperationException();
-                }
-
-                newBody = new ReplacingExpressionVisitor(_replacements).Visit(newBody);
-
-                return Lambda(newBody, _transparentIdentifierParameter);
-            }
-
-            public FlattenedGroupJoinExpression UpdateSource(Expression expression)
-            {
-                Source = expression;
-
-                return this;
-            }
-
-            public override ExpressionType NodeType => ExpressionType.Extension;
-            public override Type Type => Source.Type;
-
-            public Expression Source { get; private set; }
-        }
-
-        private class ResultSelectorVerifyingExpressionVisitor : ExpressionVisitor
-        {
-            private ParameterExpression _groupParameter;
-            private bool _containsGroupParameter;
-            public bool Verify(Expression body, ParameterExpression groupParameter)
-            {
-                _groupParameter = groupParameter;
-                _containsGroupParameter = false;
-
-                Visit(body);
-
-                return _containsGroupParameter;
-            }
-
-            protected override Expression VisitParameter(ParameterExpression parameterExpression)
-            {
-                if (parameterExpression == _groupParameter)
-                {
-                    _containsGroupParameter = true;
-                }
-
-                return base.VisitParameter(parameterExpression);
-            }
-        }
 
         protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
         {
             if (methodCallExpression.Method.DeclaringType == typeof(Queryable))
             {
-                var source = Visit(methodCallExpression.Arguments[0]);
-                if (source is FlattenedGroupJoinExpression flattenedGroupJoinExpression)
+                if (methodCallExpression.Method.IsGenericMethod)
                 {
-                    // Re-map the lambdas
-                    switch (methodCallExpression.Method.Name)
+                    var genericMethod = methodCallExpression.Method.GetGenericMethodDefinition();
+                    if (genericMethod == _selectManyWithCollectionSelectorMethodInfo)
                     {
-                        case nameof(Queryable.Where):
-                            var remappedPredicate = flattenedGroupJoinExpression.RemapLambda(
-                                UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]));
-
-                            return flattenedGroupJoinExpression.UpdateSource(
-                                Expression.Call(
-                                    methodCallExpression.Method.GetGenericMethodDefinition().MakeGenericMethod(
-                                        flattenedGroupJoinExpression.Source.Type.TryGetSequenceType()),
-                                    flattenedGroupJoinExpression.Source,
-                                    Expression.Quote(remappedPredicate)));
-
-                        case nameof(Queryable.OrderBy):
-                            var remappedKeySelector = flattenedGroupJoinExpression.RemapLambda(
-                                UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]));
-
-                            return flattenedGroupJoinExpression.UpdateSource(
-                                Expression.Call(
-                                    methodCallExpression.Method.GetGenericMethodDefinition().MakeGenericMethod(
-                                        flattenedGroupJoinExpression.Source.Type.TryGetSequenceType(), remappedKeySelector.ReturnType),
-                                    flattenedGroupJoinExpression.Source,
-                                    Expression.Quote(remappedKeySelector)));
-
-                        case nameof(Queryable.Select):
-                            var remappedProjection = flattenedGroupJoinExpression.RemapLambda(
-                                UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]));
-
-                            return Expression.Call(
-                                methodCallExpression.Method.GetGenericMethodDefinition().MakeGenericMethod(
-                                    flattenedGroupJoinExpression.Source.Type.TryGetSequenceType(), remappedProjection.ReturnType),
-                                flattenedGroupJoinExpression.Source,
-                                Expression.Quote(remappedProjection));
-                    }
-                }
-                else if (methodCallExpression.Method.IsGenericMethod
-                    && methodCallExpression.Method.GetGenericMethodDefinition() == _selectManyMethodInfo)
-                {
-                    // SelectMany
-                    var selectManySource = methodCallExpression.Arguments[0];
-                    if (selectManySource is MethodCallExpression groupJoinMethod
-                        && groupJoinMethod.Method.IsGenericMethod
-                        && groupJoinMethod.Method.GetGenericMethodDefinition() == _groupJoinMethodInfo)
-                    {
-                        // GroupJoin
-                        var outer = groupJoinMethod.Arguments[0];
-                        var inner = groupJoinMethod.Arguments[1];
-                        var outerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[2]);
-                        var innerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[3]);
-                        var groupJoinResultSelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[4]);
-
-                        var selectManyCollectionSelector = UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]);
-                        var selectManyResultSelector = UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[2]);
-
-                        var collectionSelectorBody = selectManyCollectionSelector.Body;
-                        var defaultIfEmpty = false;
-
-                        if (collectionSelectorBody is MethodCallExpression collectionEndingMethod
-                            && collectionEndingMethod.Method.IsGenericMethod
-                            && collectionEndingMethod.Method.GetGenericMethodDefinition() == _defaultIfEmptyWithoutArgMethodInfo)
+                        // SelectMany
+                        var selectManySource = methodCallExpression.Arguments[0];
+                        if (selectManySource is MethodCallExpression groupJoinMethod
+                            && groupJoinMethod.Method.IsGenericMethod
+                            && groupJoinMethod.Method.GetGenericMethodDefinition() == _groupJoinMethodInfo)
                         {
-                            defaultIfEmpty = true;
-                            collectionSelectorBody = collectionEndingMethod.Arguments[0];
-                        }
+                            // GroupJoin
+                            var outer = Visit(groupJoinMethod.Arguments[0]);
+                            var inner = Visit(groupJoinMethod.Arguments[1]);
+                            var outerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[2]);
+                            var innerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[3]);
+                            var groupJoinResultSelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[4]);
 
-                        collectionSelectorBody = ReplacingExpressionVisitor.Replace(
-                            selectManyCollectionSelector.Parameters[0],
-                            groupJoinResultSelector.Body,
-                            collectionSelectorBody);
+                            var selectManyCollectionSelector = UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]);
+                            var selectManyResultSelector = UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[2]);
 
-                        var correlatedCollectionSelector = _selectManyVerifyingExpressionVisitor
-                            .VerifyCollectionSelector(
-                                collectionSelectorBody, groupJoinResultSelector.Parameters[1]);
+                            var collectionSelectorBody = selectManyCollectionSelector.Body;
+                            var defaultIfEmpty = false;
 
-                        if (correlatedCollectionSelector)
-                        {
-                            var outerParameter = outerKeySelector.Parameters[0];
-                            var innerParameter = innerKeySelector.Parameters[0];
-                            var correlationPredicate = Expression.Equal(
-                                outerKeySelector.Body,
-                                innerKeySelector.Body);
+                            if (collectionSelectorBody is MethodCallExpression collectionEndingMethod
+                                && collectionEndingMethod.Method.IsGenericMethod
+                                && collectionEndingMethod.Method.GetGenericMethodDefinition() == _defaultIfEmptyWithoutArgMethodInfo)
+                            {
+                                defaultIfEmpty = true;
+                                collectionSelectorBody = collectionEndingMethod.Arguments[0];
+                            }
 
-                            inner = Expression.Call(
-                                _whereMethodInfo.MakeGenericMethod(inner.Type.TryGetSequenceType()),
-                                inner,
-                                Expression.Quote(Expression.Lambda(correlationPredicate, innerParameter)));
+                            collectionSelectorBody = ReplacingExpressionVisitor.Replace(
+                                selectManyCollectionSelector.Parameters[0],
+                                groupJoinResultSelector.Body,
+                                collectionSelectorBody);
 
-                            inner = ReplacingExpressionVisitor.Replace(
-                                    groupJoinResultSelector.Parameters[1],
+                            var correlatedCollectionSelector = _selectManyVerifyingExpressionVisitor
+                                .VerifyCollectionSelector(
+                                    collectionSelectorBody, groupJoinResultSelector.Parameters[1]);
+
+                            if (correlatedCollectionSelector)
+                            {
+                                var outerParameter = outerKeySelector.Parameters[0];
+                                var innerParameter = innerKeySelector.Parameters[0];
+                                var correlationPredicate = Expression.Equal(
+                                    outerKeySelector.Body,
+                                    innerKeySelector.Body);
+
+                                inner = Expression.Call(
+                                    _whereMethodInfo.MakeGenericMethod(inner.Type.TryGetSequenceType()),
                                     inner,
-                                    collectionSelectorBody);
+                                    Expression.Quote(Expression.Lambda(correlationPredicate, innerParameter)));
 
-                            inner = Expression.Quote(Expression.Lambda(inner, outerParameter));
-                        }
-                        else
-                        {
-                            inner = _enumerableToQueryableReMappingExpressionVisitor.Visit(
-                                ReplacingExpressionVisitor.Replace(
-                                    groupJoinResultSelector.Parameters[1],
-                                    inner,
-                                    collectionSelectorBody));
-                        }
+                                inner = ReplacingExpressionVisitor.Replace(
+                                        groupJoinResultSelector.Parameters[1],
+                                        inner,
+                                        collectionSelectorBody);
 
-                        var resultSelectorBody = ReplacingExpressionVisitor.Replace(
-                            selectManyResultSelector.Parameters[0],
-                            groupJoinResultSelector.Body,
-                            selectManyResultSelector.Body);
+                                inner = Expression.Quote(Expression.Lambda(inner, outerParameter));
+                            }
+                            else
+                            {
+                                inner = _enumerableToQueryableReMappingExpressionVisitor.Visit(
+                                    ReplacingExpressionVisitor.Replace(
+                                        groupJoinResultSelector.Parameters[1],
+                                        inner,
+                                        collectionSelectorBody));
+                            }
 
-                        var containsGroupParameter = _resultSelectorVerifyingExpressionVisitor.Verify(
-                            resultSelectorBody, groupJoinResultSelector.Parameters[1]);
-
-                        if (containsGroupParameter)
-                        {
-                            var outerType = outer.Type.TryGetSequenceType();
-                            var innerType = inner.Type.TryGetSequenceType();
-
-                            var transparentIdentifierType = typeof(TransparentIdentifier<,>).MakeGenericType(outerType, innerType);
-                            var outerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Outer");
-                            var innerMemberInfo = transparentIdentifierType.GetTypeInfo().GetDeclaredField("Inner");
+                            var resultSelectorBody = ReplacingExpressionVisitor.Replace(
+                                selectManyResultSelector.Parameters[0],
+                                groupJoinResultSelector.Body,
+                                selectManyResultSelector.Body);
 
                             var resultSelector = Expression.Lambda(
-                                Expression.New(
-                                    transparentIdentifierType.GetTypeInfo().DeclaredConstructors.Single(),
-                                    new[] { groupJoinResultSelector.Parameters[0], selectManyResultSelector.Parameters[1] },
-                                    new[] { outerMemberInfo, innerMemberInfo }),
+                                resultSelectorBody,
                                 groupJoinResultSelector.Parameters[0],
                                 selectManyResultSelector.Parameters[1]);
-
-                            Expression flattenedExpression = null;
 
                             if (correlatedCollectionSelector)
                             {
@@ -296,7 +166,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                                 if (defaultIfEmpty)
                                 {
                                     // left join
-                                    flattenedExpression = Expression.Call(
+                                    return Expression.Call(
                                         _leftJoinMethodInfo.MakeGenericMethod(
                                             outer.Type.TryGetSequenceType(),
                                             inner.Type.TryGetSequenceType(),
@@ -311,7 +181,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                                 else
                                 {
                                     // inner join
-                                    flattenedExpression = Expression.Call(
+                                    return Expression.Call(
                                         _joinMethodInfo.MakeGenericMethod(
                                             outer.Type.TryGetSequenceType(),
                                             inner.Type.TryGetSequenceType(),
@@ -324,41 +194,80 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                                         resultSelector);
                                 }
                             }
-
-                            var transparentIdentifierParameter = Expression.Parameter(transparentIdentifierType);
-
-                            var replacements = new Dictionary<Expression, Expression>
-                            {
-                                {
-                                    groupJoinResultSelector.Parameters[0],
-                                    Expression.MakeMemberAccess(transparentIdentifierParameter, outerMemberInfo)
-                                },
-                                {
-                                    selectManyResultSelector.Parameters[1],
-                                    Expression.MakeMemberAccess(transparentIdentifierParameter, innerMemberInfo)
-                                },
-                            };
-
-                            return new FlattenedGroupJoinExpression(
-                                flattenedExpression,
-                                resultSelectorBody,
-                                groupJoinResultSelector.Parameters[1],
-                                replacements,
-                                transparentIdentifierParameter);
                         }
-                        else
+                    }
+                    else if (genericMethod == _selectManyWithoutCollectionSelectorMethodInfo)
+                    {
+                        // SelectMany
+                        var selectManySource = methodCallExpression.Arguments[0];
+                        if (selectManySource is MethodCallExpression groupJoinMethod
+                            && groupJoinMethod.Method.IsGenericMethod
+                            && groupJoinMethod.Method.GetGenericMethodDefinition() == _groupJoinMethodInfo)
                         {
-                            var resultSelector = Expression.Lambda(
-                                resultSelectorBody,
-                                groupJoinResultSelector.Parameters[0],
-                                selectManyResultSelector.Parameters[1]);
+                            // GroupJoin
+                            var outer = Visit(groupJoinMethod.Arguments[0]);
+                            var inner = Visit(groupJoinMethod.Arguments[1]);
+                            var outerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[2]);
+                            var innerKeySelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[3]);
+                            var groupJoinResultSelector = UnwrapLambdaFromQuoteExpression(groupJoinMethod.Arguments[4]);
+
+                            var selectManyResultSelector = UnwrapLambdaFromQuoteExpression(methodCallExpression.Arguments[1]);
+
+                            var groupJoinResultSelectorBody = groupJoinResultSelector.Body;
+                            var defaultIfEmpty = false;
+
+                            if (groupJoinResultSelectorBody is MethodCallExpression collectionEndingMethod
+                                && collectionEndingMethod.Method.IsGenericMethod
+                                && collectionEndingMethod.Method.GetGenericMethodDefinition() == _defaultIfEmptyWithoutArgMethodInfo)
+                            {
+                                defaultIfEmpty = true;
+                                groupJoinResultSelectorBody = collectionEndingMethod.Arguments[0];
+                            }
+
+                            var correlatedCollectionSelector = _selectManyVerifyingExpressionVisitor
+                                .VerifyCollectionSelector(
+                                    groupJoinResultSelectorBody, groupJoinResultSelector.Parameters[1]);
 
                             if (correlatedCollectionSelector)
                             {
-                                // select many case
+                                throw new NotImplementedException();
+                                //var outerParameter = outerKeySelector.Parameters[0];
+                                //var innerParameter = innerKeySelector.Parameters[0];
+                                //var correlationPredicate = Expression.Equal(
+                                //    outerKeySelector.Body,
+                                //    innerKeySelector.Body);
+
+                                //inner = Expression.Call(
+                                //    _whereMethodInfo.MakeGenericMethod(inner.Type.TryGetSequenceType()),
+                                //    inner,
+                                //    Expression.Quote(Expression.Lambda(correlationPredicate, innerParameter)));
+
+                                //inner = ReplacingExpressionVisitor.Replace(
+                                //        groupJoinResultSelector.Parameters[1],
+                                //        inner,
+                                //        groupJoinResultSelectorBody);
+
+                                //inner = Expression.Quote(Expression.Lambda(inner, outerParameter));
                             }
                             else
                             {
+                                inner = ReplacingExpressionVisitor.Replace(
+                                    groupJoinResultSelector.Parameters[1],
+                                    inner,
+                                    groupJoinResultSelectorBody);
+
+                                inner = ReplacingExpressionVisitor.Replace(
+                                    selectManyResultSelector.Parameters[0],
+                                    inner,
+                                    selectManyResultSelector.Body);
+
+                                inner = _enumerableToQueryableReMappingExpressionVisitor.Visit(inner);
+
+                                var resultSelector = Expression.Lambda(
+                                    innerKeySelector.Parameters[0],
+                                    groupJoinResultSelector.Parameters[0],
+                                    innerKeySelector.Parameters[0]);
+
                                 // join case
                                 if (defaultIfEmpty)
                                 {

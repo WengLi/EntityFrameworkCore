@@ -54,11 +54,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
         #endregion
     }
 
-    public class LeftJoinExpression : PredicateJoinExpressionBase
+    public class CrossJoinExpression : JoinExpressionBase
     {
         #region Fields & Constructors
-        public LeftJoinExpression(TableExpressionBase table, SqlExpression joinPredicate)
-            : base(table, joinPredicate)
+        public CrossJoinExpression(TableExpressionBase table)
+            : base(table)
         {
         }
         #endregion
@@ -67,15 +67,14 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
         protected override Expression VisitChildren(ExpressionVisitor visitor)
         {
             var table = (TableExpressionBase)visitor.Visit(Table);
-            var joinPredicate = (SqlExpression)visitor.Visit(JoinPredicate);
 
-            return Update(table, joinPredicate);
+            return Update(table);
         }
 
-        public LeftJoinExpression Update(TableExpressionBase table, SqlExpression joinPredicate)
+        public CrossJoinExpression Update(TableExpressionBase table)
         {
-            return table != Table || joinPredicate != JoinPredicate
-                ? new LeftJoinExpression(table, joinPredicate)
+            return table != Table
+                ? new CrossJoinExpression(table)
                 : this;
         }
         #endregion
@@ -84,11 +83,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
         public override bool Equals(object obj)
             => obj != null
             && (ReferenceEquals(this, obj)
-                || obj is LeftJoinExpression leftJoinExpression
-                    && Equals(leftJoinExpression));
+                || obj is CrossJoinExpression crossJoinExpression
+                    && Equals(crossJoinExpression));
 
-        private bool Equals(LeftJoinExpression leftJoinExpression)
-            => base.Equals(leftJoinExpression);
+        private bool Equals(CrossJoinExpression crossJoinExpression)
+            => base.Equals(crossJoinExpression);
 
         public override int GetHashCode()
         {
