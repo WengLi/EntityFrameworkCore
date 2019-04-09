@@ -262,6 +262,45 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
         protected override ShapedQueryExpression TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner, LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
         {
+            var outerSelectExpression = (SelectExpression)outer.QueryExpression;
+            if (outerSelectExpression.Limit != null
+                || outerSelectExpression.Offset != null
+                || outerSelectExpression.IsDistinct)
+            {
+                outerSelectExpression.PushdownIntoSubQuery();
+            }
+
+            var innerSelectExpression = (SelectExpression)inner.QueryExpression;
+            if (innerSelectExpression.Orderings.Any()
+                || innerSelectExpression.Limit != null
+                || innerSelectExpression.Offset != null
+                || innerSelectExpression.IsDistinct
+                || innerSelectExpression.Predicate != null)
+            {
+                innerSelectExpression.PushdownIntoSubQuery();
+            }
+
+            var joinPredicate = CreateJoinPredicate(outer, outerKeySelector, inner, innerKeySelector);
+            if (joinPredicate != null)
+            {
+                outer = TranslateThenBy(outer, outerKeySelector, true);
+
+                var innerTransparentIdentifierType = CreateTransparentIdentifierType(
+                    resultSelector.Parameters[0].Type,
+                    resultSelector.Parameters[1].Type.TryGetSequenceType());
+
+                outerSelectExpression.AddLeftJoin(
+                    innerSelectExpression, joinPredicate, innerTransparentIdentifierType);
+
+                return TranslateResultSelectorForGroupJoin(
+                    outer,
+                    inner.ShaperExpression,
+                    outerKeySelector,
+                    innerKeySelector,
+                    resultSelector,
+                    innerTransparentIdentifierType);
+            }
+
             throw new NotImplementedException();
         }
 

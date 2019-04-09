@@ -486,6 +486,55 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
             return TranslateSelect(outer, newResultSelector);
         }
 
+        protected ShapedQueryExpression TranslateResultSelectorForGroupJoin(
+            ShapedQueryExpression outer,
+            LambdaExpression innerShaper,
+            LambdaExpression outerKeySelector,
+            LambdaExpression innerKeySelector,
+            LambdaExpression resultSelector,
+            Type transparentIdentifierType)
+        {
+            innerShaper = Expression.Lambda(
+                new EntityShaperNullableMarkingExpressionVisitor().Visit(innerShaper.Body),
+                innerShaper.Parameters);
+
+            var shaperExpression = CombineShapers(
+               outer.QueryExpression,
+               outer.ShaperExpression,
+               innerShaper,
+               transparentIdentifierType);
+
+            var transparentIdentifierParameter = Expression.Parameter(transparentIdentifierType);
+            var outerAccess = AccessOuterTransparentField(transparentIdentifierType, transparentIdentifierParameter);
+            var innerAccess = AccessInnerTransparentField(transparentIdentifierType, transparentIdentifierParameter);
+
+            var outerKey = ReplacingExpressionVisitor.Replace(
+                outerKeySelector.Parameters[0],
+                outerAccess,
+                outerKeySelector.Body);
+
+            var innerKey = ReplacingExpressionVisitor.Replace(
+                innerKeySelector.Parameters[0],
+                innerAccess,
+                innerKeySelector.Body);
+
+            var replacements = new Dictionary<Expression, Expression>
+            {
+                { resultSelector.Parameters[0], outerAccess  },
+                { resultSelector.Parameters[1], new CollectionShaperExpression(outerAccess, innerAccess, outerKey, innerKey) },
+            };
+
+            var resultBody = new ReplacingExpressionVisitor(replacements).Visit(resultSelector.Body);
+            resultBody = ReplacingExpressionVisitor.Replace(
+                transparentIdentifierParameter,
+                shaperExpression.Body,
+                resultBody);
+
+            outer.ShaperExpression = Expression.Lambda(resultBody, shaperExpression.Parameters);
+
+            return outer;
+        }
+
         private LambdaExpression CombineShapers(
             Expression queryExpression,
             LambdaExpression outerShaper,

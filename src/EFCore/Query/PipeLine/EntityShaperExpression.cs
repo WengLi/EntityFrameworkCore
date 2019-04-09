@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -36,5 +37,46 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
         public override Type Type => EntityType.ClrType;
         public override ExpressionType NodeType => ExpressionType.Extension;
+    }
+
+    public class CollectionShaperExpression : Expression
+    {
+        public CollectionShaperExpression(
+            Expression parent,
+            Expression innerShaper,
+            Expression outerKey,
+            Expression innerKey)
+        {
+            Parent = parent;
+            InnerShaper = innerShaper;
+            OuterKey = outerKey;
+            InnerKey = innerKey;
+        }
+
+
+        protected override Expression VisitChildren(ExpressionVisitor visitor)
+        {
+            var parent = visitor.Visit(Parent);
+            var innerShaper = visitor.Visit(InnerShaper);
+            var outerKey = visitor.Visit(OuterKey);
+            var innerKey = visitor.Visit(InnerKey);
+
+            return parent != Parent || innerShaper != InnerShaper || outerKey != OuterKey || innerKey != InnerKey
+                ? new CollectionShaperExpression(parent, innerShaper, outerKey, innerKey)
+                : this;
+        }
+
+
+        public override ExpressionType NodeType => ExpressionType.Extension;
+
+        public override Type Type => typeof(IEnumerable<>).MakeGenericType(InnerShaper.Type);
+
+        public Expression Parent { get; }
+
+        public Expression InnerShaper { get; }
+
+        public Expression OuterKey { get; }
+
+        public Expression InnerKey { get; }
     }
 }

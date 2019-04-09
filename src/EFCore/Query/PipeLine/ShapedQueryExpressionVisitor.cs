@@ -83,6 +83,9 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
         private class EntityMaterializerInjectingExpressionVisitor : ExpressionVisitor
         {
+            private IDictionary<EntityShaperExpression, ParameterExpression> _entityCache
+                = new Dictionary<EntityShaperExpression, ParameterExpression>();
+
             private static readonly ConstructorInfo _materializationContextConstructor
                 = typeof(MaterializationContext).GetConstructors().Single(ci => ci.GetParameters().Length == 2);
 
@@ -129,6 +132,11 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
             {
                 if (extensionExpression is EntityShaperExpression entityShaperExpression)
                 {
+                    if (_entityCache.TryGetValue(entityShaperExpression, out var existingInstance))
+                    {
+                        return existingInstance;
+                    }
+
                     _currentEntityIndex++;
                     var entityType = entityShaperExpression.EntityType;
                     var valueBuffer = entityShaperExpression.ValueBufferExpression;
@@ -204,7 +212,22 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                                     MaterializeEntity(entityType, valueBuffer))));
                     }
 
+                    _entityCache[entityShaperExpression] = result;
+
                     return result;
+                }
+
+                if (extensionExpression is CollectionShaperExpression collectionShaper)
+                {
+                    var keyType = collectionShaper.OuterKey.Type;
+                    var comparerType = typeof(EqualityComparer<>).MakeGenericType(keyType);
+                    var comparer = Expression.Variable(comparerType, "comparer" + _currentEntityIndex);
+
+                    _variables.Add(comparer);
+                    Expression.Assign(
+                        comparer,
+                        Expression.MakeMemberAccess(null, comparerType.GetProperty(nameof(EqualityComparer<int>.Default))));
+                    var parent = Visit(collectionShaper.Parent);
                 }
 
                 if (extensionExpression is ProjectionBindingExpression)
